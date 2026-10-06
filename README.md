@@ -125,6 +125,25 @@ Read the head's `/tmp/ray/session_latest/logs/monitor.log` for scaling decisions
 `ray status` inside the head. Startup failures appear in the affected service's container
 logs. Northflank rollout status `COMPLETED` means deployed, not that a Ray job finished.
 
+## Repeat the two-worker smoke test
+
+The example workload requires two workers with 2 CPUs each. With the head's private Jobs
+port forwarded locally, run:
+
+```bash
+ray job submit --address=http://127.0.0.1:8265 --working-dir=./examples -- python smoke.py start
+ray job submit --address=http://127.0.0.1:8265 --working-dir=./examples -- python smoke.py status
+ray job submit --address=http://127.0.0.1:8265 --working-dir=./examples -- python smoke.py stop
+```
+
+`start` creates two detached actors, verifies distinct worker/pod identities and checks a
+34.5 MB cross-worker object transfer. The actors keep both workers allocated until `stop`.
+Delete one worker service during this trial and run `status` to observe actor recovery on
+a new worker. Northflank deletion is asynchronous: wait for the service to disappear and
+for Ray to replace it. The other worker should keep its identity. Run `stop` even if a
+check fails, then verify that worker services disappear after the configured idle timeout.
+Pause the head when finished to stop its compute usage and further worker provisioning.
+
 ## Networking and identity
 
 All services must run in the same Northflank project/network with private pod-to-pod
