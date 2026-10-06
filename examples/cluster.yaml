@@ -1,0 +1,57 @@
+# Copy to cluster.local.yaml. Set project, cluster UUID, image and compute plans.
+cluster_name: nf-ray-prototype
+max_workers: 3
+upscaling_speed: 1.0
+idle_timeout_minutes: 5
+
+provider:
+  type: external
+  module: northflank_ray.provider.NorthflankNodeProvider
+  project_id: your-ray-project
+  cluster_id: 23112b84-1caa-487f-b713-7f7644b4cd96 # Generate a fresh UUID per cluster.
+  head_service_id: ray-prototype-head
+  disable_node_updaters: true
+  use_internal_ips: true
+  worker_liveness_check: true
+  disable_launch_config_check: false
+  refresh_seconds: 30
+  startup_timeout_seconds: 900
+
+head_node_type: ray.head
+available_node_types:
+  ray.head:
+    min_workers: 0
+    max_workers: 0
+    resources:
+      CPU: 0 # Reserve this head for GCS, dashboard, jobs driver and autoscaler.
+    node_config:
+      object_store_memory: 268435456 # 256 MiB, expressed in bytes.
+      service:
+        billing:
+          deploymentPlan: nf-compute-200 # Example: choose a plan with at least 2 CPU / 4 GiB.
+        deployment:
+          external:
+            imagePath: ghcr.io/your-org/ray-northflank:0.1.0
+            # credentials: your-northflank-registry-credential-id
+          storage:
+            shmSize: 512 # MiB; included in the container's memory budget.
+          gracePeriodSeconds: 60
+
+  ray.worker:
+    min_workers: 0
+    max_workers: 3
+    resources:
+      CPU: 2
+      memory: 2147483648 # 2 GiB of schedulable heap, with room for Ray and object store.
+      export_slot: 1
+    node_config:
+      object_store_memory: 536870912 # 512 MiB.
+      service:
+        billing:
+          deploymentPlan: nf-compute-200 # Match CPU/memory above to the chosen plan.
+        deployment:
+          external:
+            imagePath: ghcr.io/your-org/ray-northflank:0.1.0
+          storage:
+            shmSize: 1024
+          gracePeriodSeconds: 60
