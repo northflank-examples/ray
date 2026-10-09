@@ -10,10 +10,11 @@ def service_body(*, provider, name, metadata, node_config, resources, labels):
     body["autoscaling"] = {"horizontal": {"enabled": False, "minReplicas": 1, "maxReplicas": 1}}
     body["deployment"].update({
         "instances": 1,
-        "type": "deployment",
-        "strategy": {"type": "recreate"},
+        "type": "deployment" if metadata.kind == NODE_KIND_HEAD else "statefulSet",
         "docker": {"configType": "customEntrypoint", "customEntrypoint": "ray-northflank-start"},
     })
+    if metadata.kind == NODE_KIND_HEAD:
+        body["deployment"]["strategy"] = {"type": "recreate"}
     environment = body.setdefault("runtimeEnvironment", {})
     environment.update({
         "RAY_NF_ROLE": metadata.kind,

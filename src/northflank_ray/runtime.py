@@ -49,6 +49,7 @@ def main():
         raise ValueError("Object store exceeds /dev/shm; increase deployment.storage.shmSize")
     flags = [
         "start", "--block", "--node-ip-address=" + pod_ip,
+        "--node-name=" + os.environ["NF_SERVICE_INTERNAL_ID"],
         "--node-manager-port=8077", "--object-manager-port=8076",
         f"--object-store-memory={object_store_memory}", "--disable-usage-stats",
     ]

@@ -11,8 +11,9 @@ It supports CPU workloads submitted through the Ray Jobs CLI or API.
 ## Setup
 
 Create a Northflank project with private traffic between pods. Choose compute plans for
-the head and workers. Both services use one instance and the `recreate` deployment
-strategy. If your account requires a feature flag for `recreate`, enable it first.
+the head and workers. Each worker service uses a StatefulSet with one replica. The head
+uses one instance with the `recreate` deployment strategy. If your account requires a
+feature flag for `recreate`, enable it first.
 
 Create a private [Redis addon](https://northflank.com/docs/v1/application/databases-and-persistence/deploy-databases-on-northflank/deploy-redis-on-northflank)
 in the same project. Keep AOF persistence and the `noeviction` policy enabled. The adapter
@@ -145,14 +146,16 @@ the idle timeout, then pause the head to stop its compute usage and further work
 
 ## Worker identity and networking
 
-Each service runs one pod. The `recreate` strategy prevents two pods from temporarily
-sharing a service identity during an update. This setup does not require StatefulSets.
+Each service runs one pod. Worker services use separate single-replica StatefulSets, so
+Ray can delete any idle worker independently. The head uses the `recreate` strategy to
+avoid overlapping head instances. Workers do not require persistent volumes.
 
 Workers connect to the private head service on port `6379`, which runs the Ray Global
 Control Service (GCS). Each Ray process advertises its `NF_POD_IP`. The provider resolves
 `<worker-service-id>-headless` to find the worker pod IP. For deployments without
-headless DNS, it uses live GCS nodes whose hostname exactly matches a registered service
-ID. Service UIDs are checked before discovery. It supports IPv4 and stops a refresh if
+headless DNS, it uses live GCS nodes whose Ray node name matches a registered service
+ID. The startup command sets that name from `NF_SERVICE_INTERNAL_ID`; older images can
+also match by pod hostname. Service UIDs are checked before discovery. It supports IPv4 and stops a refresh if
 DNS returns multiple IPs or multiple live GCS nodes claim the same service.
 
 Services must share a Northflank project and network. Ports `6379` for GCS, `8265` for

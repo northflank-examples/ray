@@ -106,11 +106,11 @@ class NorthflankNodeProvider(NodeProvider):
             return {}
         if self.gcs_client is None:
             self.gcs_client = GcsClient(address=os.environ["RAY_NF_HEAD_ADDRESS"])
-        # Pod-only deployments have no headless service; their hostname is the service ID.
+        # Older images use the pod hostname; new images advertise the service ID explicitly.
         nodes = self.gcs_client.get_all_node_info(timeout=5)
         ips = {}
         for node in nodes.values():
-            name = node.node_manager_hostname
+            name = node.node_name if node.node_name in missing else node.node_manager_hostname
             if node.state != GcsNodeInfo.ALIVE or name not in missing:
                 continue
             if name in ips:
