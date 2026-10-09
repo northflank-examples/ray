@@ -53,7 +53,9 @@ internal:
   buildId: YOUR_SUCCESSFUL_BUILD_ID
 ```
 
-Pin `buildId` so that every worker uses the same build. The API defaults to
+Pin `buildId` so that every worker uses the same build. When patching an existing
+deployment, also set `buildSHA` to that build's commit SHA. Otherwise, Northflank can
+retain the previous SHA and reject the new build ID. The API defaults to
 `https://api.northflank.com`. For another Northflank environment, set `provider.api_url`
 to its HTTPS origin without `/v1`.
 
