@@ -120,7 +120,7 @@ def validate_resources(resources):
         if name != "memory" and int(amount) != amount:
             raise ValueError(f"Resource {name} must be a whole number for ray start")
     if resources.get("GPU", 0):
-        raise ValueError("This CPU prototype does not configure Northflank GPU allocation")
+        raise ValueError("This provider does not configure Northflank GPU allocation")
     if "object_store_memory" in resources:
         raise ValueError("Set object_store_memory in node_config, not resources")
 

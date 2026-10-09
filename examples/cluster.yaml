@@ -1,5 +1,5 @@
 # Copy to cluster.local.yaml. Set project, cluster UUID, image and compute plans.
-cluster_name: nf-ray-prototype
+cluster_name: nf-ray
 max_workers: 3
 upscaling_speed: 1.0
 idle_timeout_minutes: 5
@@ -9,7 +9,7 @@ provider:
   module: northflank_ray.provider.NorthflankNodeProvider
   project_id: your-ray-project
   cluster_id: 23112b84-1caa-487f-b713-7f7644b4cd96 # Generate a fresh UUID per cluster.
-  head_service_id: ray-prototype-head
+  head_service_id: ray-head
   disable_node_updaters: true
   use_internal_ips: true
   worker_liveness_check: true
