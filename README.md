@@ -59,10 +59,11 @@ retain the previous SHA and reject the new build ID. The API defaults to
 `https://api.northflank.com`. For another Northflank environment, set `provider.api_url`
 to its HTTPS origin without `/v1`.
 
+Run the setup commands with the Python environment where you installed this package.
 Render the head service definition:
 
 ```bash
-ray-northflank bootstrap cluster.local.yaml > head-service.json
+python -m northflank_ray bootstrap cluster.local.yaml > head-service.json
 ```
 
 This command writes JSON without calling Northflank or Redis, or reading credentials.
@@ -84,7 +85,7 @@ to the forwarded address on your machine.
 Create the head:
 
 ```bash
-ray-northflank bootstrap cluster.local.yaml --apply
+python -m northflank_ray bootstrap cluster.local.yaml --apply
 ```
 
 `--apply` creates a billable head service. The head starts Ray with the YAML configuration
@@ -168,7 +169,7 @@ The key has no expiry. The adapter never reads or modifies Ray's own Redis keys.
 
 ## Operation
 
-Workers start from a container image. Use `ray-northflank bootstrap` to create the head
+Workers start from a container image. Use `python -m northflank_ray bootstrap` to create the head
 and Ray Jobs to submit work. `ray up`, `ray down`, `ray exec`, SSH and rsync are unsupported.
 
 By default, workers have 15 minutes to acquire an IP. After that, or once an IP is available,
@@ -204,7 +205,7 @@ To migrate a cluster that stores metadata in descriptions, install this package 
 supply the API token and Redis URLs described above. Preview the import:
 
 ```bash
-ray-northflank migrate-metadata cluster.local.yaml
+python -m northflank_ray migrate-metadata cluster.local.yaml
 ```
 
 Stop application work, pause the head and wait for its pod to exit. Pausing the head loses
@@ -212,7 +213,7 @@ active jobs because this deployment does not persist Ray GCS state. Do not delet
 The `--head-stopped` flag confirms that you completed this step. The command does not stop the head.
 
 ```bash
-ray-northflank migrate-metadata cluster.local.yaml --apply --head-stopped
+python -m northflank_ray migrate-metadata cluster.local.yaml --apply --head-stopped
 ```
 
 The migration imports the existing UIDs and Ray metadata, then replaces the encoded descriptions.
@@ -224,15 +225,15 @@ Changing worker image settings can cause Ray to replace workers, so use a mainte
 Inspect the registry without printing credentials:
 
 ```bash
-ray-northflank registry cluster.local.yaml
+python -m northflank_ray registry cluster.local.yaml
 ```
 
 For a pending creation, stop the head and make sure that the original API request has finished.
 Inspect the exact service in Northflank. If it belongs to this cluster, supply its immutable UID:
 
 ```bash
-ray-northflank reconcile cluster.local.yaml --service-id SERVICE_ID --uid SERVICE_UID
-ray-northflank reconcile cluster.local.yaml --service-id SERVICE_ID --uid SERVICE_UID --apply --head-stopped
+python -m northflank_ray reconcile cluster.local.yaml --service-id SERVICE_ID --uid SERVICE_UID
+python -m northflank_ray reconcile cluster.local.yaml --service-id SERVICE_ID --uid SERVICE_UID --apply --head-stopped
 ```
 
 If Northflank confirms that no service was created, use `--absent` in place of `--uid SERVICE_UID`.

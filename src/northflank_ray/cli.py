@@ -151,7 +151,9 @@ def manage_registry(config, arguments):
 
 
 def main():
-    parser = argparse.ArgumentParser(description="Bootstrap a Ray head on Northflank")
+    parser = argparse.ArgumentParser(
+        prog="python -m northflank_ray", description="Bootstrap a Ray head on Northflank",
+    )
     commands = parser.add_subparsers(dest="command", required=True)
     bootstrap = commands.add_parser("bootstrap", help="Render a head service; --apply creates it")
     bootstrap.add_argument("config")
