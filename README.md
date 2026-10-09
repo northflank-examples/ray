@@ -89,7 +89,7 @@ Create the head:
 python -m northflank_ray bootstrap cluster.local.yaml --apply
 ```
 
-`--apply` creates a billable head service. The head starts Ray with the YAML configuration
+`--apply` creates a billable head service. The head starts Ray with the cluster configuration
 and creates workers within its limits. Running bootstrap again leaves an existing owned
 head unchanged. It registers the head in Redis before the autoscaler starts provisioning workers.
 Use bootstrap to create the head so that the service and registry agree.
@@ -99,8 +99,34 @@ Workers refuse to start if they inherit either credential. For credential rotati
 link the Redis connection secret through a secret group restricted to the head service.
 Remove the direct runtime value when switching to an inherited secret.
 
-Keep application passwords in Northflank secret groups. Ray logs the cluster YAML.
+Keep application passwords in Northflank secret groups. Ray logs the cluster configuration.
 Use existing resource tags to attach secret groups to workers created by the autoscaler.
+
+## Update a cluster
+
+Edit your local YAML or JSON config, then preview and apply the update:
+
+```bash
+python -m northflank_ray update cluster.local.yaml
+python -m northflank_ray update cluster.local.yaml --apply
+```
+
+Both bootstrap and update store `RAY_NF_CLUSTER_CONFIG` as JSON. Existing YAML values
+remain readable and are converted to JSON on the next update. The head writes a temporary
+YAML file for Ray's `--autoscaling-config` to match Ray's parser, including numeric values.
+
+Update requires local Redis access, as bootstrap does, to verify the head's ownership.
+The operator token needs Services General Read/Update and Secrets Services Read/Update
+permissions. The head's worker-provisioning token does not need those extra permissions.
+The command preserves the head's existing token, Redis URL and other environment variables.
+It never prints their values. Avoid concurrent environment edits while applying an update.
+
+The update applies the head image, resources and managed settings as well as worker
+configuration. Pin both `buildId` and `buildSHA` for an internal head image. It can restart
+the head and interrupt running jobs. Existing workers are not redeployed; Ray applies
+its scaling and replacement rules to them. Check the running head image and `ray status`
+after the rollout. On pod-only deployments, a pause/resume may be needed to replace the
+running head pod. Cluster identity, head node type and head infrastructure cannot change.
 
 ## Submit jobs
 

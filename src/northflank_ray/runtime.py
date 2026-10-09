@@ -7,7 +7,7 @@ import tempfile
 
 import yaml
 
-from northflank_ray.config import prepare_config, require_pinned_ray, validate_resources
+from northflank_ray.config import parse_config, require_pinned_ray, validate_resources
 from northflank_ray.registry import RedisRegistry
 
 
@@ -25,7 +25,7 @@ def resource_flags(resources):
 def head_flags():
     if not os.environ.get("NF_API_TOKEN"):
         raise ValueError("The head requires NF_API_TOKEN for worker provisioning")
-    config = prepare_config(yaml.safe_load(os.environ["RAY_NF_CLUSTER_CONFIG"]))
+    config = parse_config(os.environ["RAY_NF_CLUSTER_CONFIG"])
     with RedisRegistry(config["provider"]) as registry:
         registry.read()
     with tempfile.NamedTemporaryFile(mode="w", suffix=".yaml", delete=False) as file:

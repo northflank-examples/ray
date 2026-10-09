@@ -2,13 +2,12 @@ import argparse
 import json
 import time
 
-import yaml
-
 from northflank_ray.api import NorthflankClient
 from northflank_ray.config import load_config
 from northflank_ray.metadata import NodeMetadata
 from northflank_ray.registry import NodeRecord, RedisRegistry, redis_url
 from northflank_ray.service import service_body
+from northflank_ray.update import update_head
 
 
 def head_metadata(config):
@@ -27,7 +26,7 @@ def head_body(config):
         provider=provider, name=provider["head_service_id"], metadata=metadata,
         node_config=node["node_config"], resources=node["resources"], labels=node.get("labels", {}),
     )
-    body["runtimeEnvironment"]["RAY_NF_CLUSTER_CONFIG"] = yaml.safe_dump(config)
+    body["runtimeEnvironment"]["RAY_NF_CLUSTER_CONFIG"] = json.dumps(config, sort_keys=True)
     return body
 
 
@@ -152,12 +151,15 @@ def manage_registry(config, arguments):
 
 def main():
     parser = argparse.ArgumentParser(
-        prog="python -m northflank_ray", description="Bootstrap a Ray head on Northflank",
+        prog="python -m northflank_ray", description="Manage a Ray head on Northflank",
     )
     commands = parser.add_subparsers(dest="command", required=True)
     bootstrap = commands.add_parser("bootstrap", help="Render a head service; --apply creates it")
     bootstrap.add_argument("config")
     bootstrap.add_argument("--apply", action="store_true", help="Create live infrastructure")
+    update = commands.add_parser("update", help="Preview or apply configuration to an existing head")
+    update.add_argument("config")
+    update.add_argument("--apply", action="store_true", help="Update the head service and config")
     for name, help_text in (
         ("registry", "Inspect the Redis ownership registry"),
         ("migrate-metadata", "Import legacy descriptions into Redis"),
@@ -174,6 +176,9 @@ def main():
             outcome.add_argument("--absent", action="store_true", help="Confirm no service was created")
     arguments = parser.parse_args()
     config = load_config(arguments.config)
+    if arguments.command == "update":
+        update_head(config, head_body(config), apply=arguments.apply)
+        return
     if arguments.command != "bootstrap":
         manage_registry(config, arguments)
         return

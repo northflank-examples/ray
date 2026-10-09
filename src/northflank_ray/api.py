@@ -107,6 +107,18 @@ class NorthflankClient:
             raise RuntimeError(f"Service identity changed during creation: {body['name']}")
         return service
 
+    def get_runtime_environment(self, service_id):
+        return self._call(
+            "get service environment", self.sdk.get.service.runtime_environment,
+            service_id=service_id, show="this",
+        ).data["runtimeEnvironment"]
+
+    def patch_service(self, service_id, body):
+        self._call(
+            "update service", self.sdk.patch.service.deployment,
+            retry=False, service_id=service_id, data=body,
+        )
+
     def set_description(self, service_id, description):
         self._call(
             "patch service", self.sdk.patch.service.deployment,

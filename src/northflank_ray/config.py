@@ -1,4 +1,5 @@
 import copy
+import json
 import math
 import re
 from pathlib import Path
@@ -18,7 +19,16 @@ def require_pinned_ray():
 
 
 def load_config(path):
-    return prepare_config(yaml.safe_load(Path(path).read_text()))
+    return parse_config(Path(path).read_text())
+
+
+def parse_config(text):
+    try:
+        config = json.loads(text)
+    except json.JSONDecodeError:
+        config = yaml.safe_load(text)
+
+    return prepare_config(config)
 
 
 def prepare_config(config):
