@@ -95,10 +95,12 @@ class NorthflankClient:
             "create service", self.sdk.create.service.deployment, retry=False, data=body,
         ).data
         service = self.get_service(body["name"])
-        # appId is name-based. Include the creation timestamp before binding GET's UID.
+        # Northflank can omit createdAt on CREATE; compare it when supplied.
         if not service or not service.get("uid"):
             raise RuntimeError(f"Could not confirm created service {body['name']}")
-        identity_fields = ("id", "appId", "createdAt")
+        identity_fields = ["id", "appId"]
+        if created.get("createdAt"):
+            identity_fields.append("createdAt")
         same_creation = all(created.get(key) and created[key] == service.get(key)
                             for key in identity_fields)
         if not same_creation or service["id"] != body["name"]:
