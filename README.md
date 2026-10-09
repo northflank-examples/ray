@@ -150,8 +150,10 @@ sharing a service identity during an update. This setup does not require Statefu
 
 Workers connect to the private head service on port `6379`, which runs the Ray Global
 Control Service (GCS). Each Ray process advertises its `NF_POD_IP`. The provider resolves
-`<worker-service-id>-headless` to find the worker pod IP. It supports IPv4 and stops a
-refresh if a worker resolves to more than one IP.
+`<worker-service-id>-headless` to find the worker pod IP. For deployments without
+headless DNS, it uses live GCS nodes whose hostname exactly matches a registered service
+ID. Service UIDs are checked before discovery. It supports IPv4 and stops a refresh if
+DNS returns multiple IPs or multiple live GCS nodes claim the same service.
 
 Services must share a Northflank project and network. Ports `6379` for GCS, `8265` for
 Ray Jobs and `8077` for the node manager are private service ports. Workers also need

@@ -1,3 +1,4 @@
+import ipaddress
 import logging
 import os
 import socket
@@ -6,6 +7,8 @@ import time
 from dataclasses import replace
 from uuid import uuid4
 
+from ray._raylet import GcsClient
+from ray.core.generated.gcs_pb2 import GcsNodeInfo
 from ray.autoscaler.node_provider import NodeProvider
 from ray.autoscaler.tags import NODE_KIND_HEAD, NODE_KIND_WORKER, TAG_RAY_NODE_KIND
 
@@ -36,6 +39,7 @@ class NorthflankNodeProvider(NodeProvider):
         self.nodes = {}
         self.records = {}
         self.ips = {}
+        self.gcs_client = None
         self.refreshed_at = float("-inf")
 
     def _refresh(self, *, force=False):
@@ -54,6 +58,9 @@ class NorthflankNodeProvider(NodeProvider):
             raise RuntimeError("Services missing from Redis registry: " + ", ".join(unregistered))
         nodes = self._reconcile(records, by_id)
         ips = {node_id: self._resolve_ip(node_id) for node_id in nodes}
+        missing = {node_id for node_id, ip in ips.items() if ip is None}
+        if missing:
+            ips.update(self._registered_worker_ips(missing))
         self.nodes = nodes
         self.records = records
         self.ips = ips
@@ -93,6 +100,24 @@ class NorthflankNodeProvider(NodeProvider):
         if len(ips) != 1:
             raise RuntimeError(f"{node_id} must resolve to exactly one pod IP; found {len(ips)}")
         return ips.pop()
+
+    def _registered_worker_ips(self, missing):
+        if os.environ.get("RAY_NF_ROLE") != NODE_KIND_HEAD:
+            return {}
+        if self.gcs_client is None:
+            self.gcs_client = GcsClient(address=os.environ["RAY_NF_HEAD_ADDRESS"])
+        # Pod-only deployments have no headless service; their hostname is the service ID.
+        nodes = self.gcs_client.get_all_node_info(timeout=5)
+        ips = {}
+        for node in nodes.values():
+            name = node.node_manager_hostname
+            if node.state != GcsNodeInfo.ALIVE or name not in missing:
+                continue
+            if name in ips:
+                raise RuntimeError(f"Multiple live Ray nodes advertise service {name}")
+            ips[name] = str(ipaddress.IPv4Address(node.node_manager_address))
+
+        return ips
 
     def non_terminated_nodes(self, tag_filters):
         with self.lock:
