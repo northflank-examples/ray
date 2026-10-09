@@ -12,7 +12,7 @@ from northflank_ray.config import prepare_config, require_pinned_ray, validate_r
 
 def resource_flags(resources):
     validate_resources(resources)
-    flags = [f"--num-cpus={resources['CPU']}", "--num-gpus=0"]
+    flags = [f"--num-cpus={int(resources['CPU'])}", "--num-gpus=0"]
     if "memory" in resources:
         flags.append(f"--memory={int(resources['memory'])}")
     custom = {key: value for key, value in resources.items() if key not in ("CPU", "GPU", "memory")}

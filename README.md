@@ -1,75 +1,44 @@
-# Ray on Northflank: service-per-worker prototype
+# Ray on Northflank
 
-Start with [`examples/cluster.yaml`](examples/cluster.yaml). This repository implements a
-Ray **2.59.0 / Python 3.11 / autoscaler V1** provider that creates one Northflank deployment
-service per Ray worker. The example allows zero to three workers.
+Run Ray on Northflank with one service for the head and one service per worker.
+The Ray autoscaler creates and deletes worker services as jobs request and release resources.
+[`examples/cluster.yaml`](examples/cluster.yaml) starts with zero to three workers.
 
-All Northflank service operations use the official **`northflank==2.0.0` Python SDK**:
-`ApiClient.list.services`, `get.service`, `create.service.deployment`,
-`patch.service.deployment` and `delete.service`.
+The adapter uses [Ray 2.59.0](https://github.com/ray-project/ray/releases/tag/ray-2.59.0),
+Python 3.11, autoscaler V1 and the official `northflank==2.0.0` Python SDK.
+It supports CPU workloads submitted through the Ray Jobs CLI or API.
 
-**Status: implemented and reviewed against source; not built, tested or deployed.**
-The end-to-end network and lifecycle behavior still needs a small live trial.
+## Setup
 
-```mermaid
-flowchart LR
-    CLI[Bootstrap CLI] -->|Create once| Head[Northflank head service\nRay GCS + dashboard + autoscaler]
-    Head -->|Create / delete by service ID| API[Northflank API]
-    API --> W1[Worker service A\n1 pod / 1 Ray node]
-    API --> W2[Worker service B\n1 pod / 1 Ray node]
-    W1 <-->|Private pod traffic| Head
-    W2 <-->|Private pod traffic| Head
-    W1 <-->|Object transfers| W2
-```
+Create a Northflank project with private traffic between pods. Choose compute plans for
+the head and workers. Both services use one instance and the `recreate` deployment
+strategy. If your account requires a feature flag for `recreate`, enable it first.
 
-## What is supported
-
-| Operation | Path |
-| --- | --- |
-| Create the head | `ray-northflank bootstrap cluster.local.yaml --apply` |
-| Autoscale workers | Ray resource demand → external provider → Northflank service create/delete |
-| Remove worker X | Ray chooses a node; the provider deletes that exact service ID |
-| Submit work | Standard Ray Jobs CLI/API against the private head dashboard |
-| VM lifecycle commands | `ray up`, `ray down`, `ray exec`, SSH and rsync are unsupported |
-
-The bootstrap command fills the ordinary Ray autoscaling YAML defaults and embeds the YAML
-in the head service. Ray's head monitor loads `northflank_ray.provider.NorthflankNodeProvider`.
-Workers start from an image; there is no SSH setup or file synchronization.
-
-StatefulSets are not required for this design. Both head and worker services have one
-instance and use the `recreate` deployment strategy. This prevents rolling updates from
-temporarily creating two Ray nodes for one provider identity. The head is a long-lived
-service, but this prototype gives it **no persistent GCS state or high availability**.
-
-## Prepare the example
-
-1. Create a Northflank project on the intended cluster/region. Choose available compute
-   plans and enable the `recreate` strategy if it requires an account feature flag.
-2. Copy `examples/cluster.yaml` to `cluster.local.yaml`. Set `project_id`, a fresh UUID
-   (`uuidgen`), image paths and compute plans. Keep `max_workers: 3` for the first trial.
-3. Build the Dockerfile in a Northflank build service, or push it to an external registry.
-   Use the target node architecture and add application dependencies before running exports.
-4. Install the local package with Python 3.11 and render the head definition for review.
-5. Create a project-scoped API token for listing, reading, creating, patching and deleting
-   services. Supply it as `NF_API_TOKEN` only when you choose to apply the definition.
+Add your application dependencies to the Dockerfile. Build for the architecture of your
+Northflank nodes. This example builds and pushes an x86-64 image:
 
 ```bash
 docker build --platform linux/amd64 -t ghcr.io/YOUR_ORG/ray-northflank:0.1.0 .
 docker push ghcr.io/YOUR_ORG/ray-northflank:0.1.0
+```
 
+Install the package locally with Python 3.11 and copy the example configuration:
+
+```bash
 python3.11 -m venv .venv
 . .venv/bin/activate
 python -m pip install -e .
 cp examples/cluster.yaml cluster.local.yaml
-# Edit cluster.local.yaml before running this command.
-ray-northflank bootstrap cluster.local.yaml > head-service.json
 ```
 
-Rendering performs no API calls and does not read or include `NF_API_TOKEN`. Treat image tags
-as immutable, or use a digest. Private images require a Northflank registry credential ID in
-`deployment.external.credentials` for both node types.
+In `cluster.local.yaml`, set `project_id`, generate a new `cluster_id` with `uuidgen`,
+and set the image and compute plan for each node type. Match the declared Ray resources
+to each plan. Keep `max_workers: 3` for the first run.
 
-To use a Northflank build service, replace `deployment.external` in both node types with:
+Use an image digest or a tag that you will not overwrite. For private images, set
+`deployment.external.credentials` to a Northflank registry credential ID on both node types.
+
+If Northflank builds the image, replace `deployment.external` in both node types with:
 
 ```yaml
 internal:
@@ -78,57 +47,63 @@ internal:
   buildId: YOUR_SUCCESSFUL_BUILD_ID
 ```
 
-The build ID is required so new workers use the same image throughout a run. The provider
-uses `https://api.northflank.com` by default. Set `provider.api_url` to the HTTPS API origin
-for a different Northflank environment; do not include `/v1`.
+Pin `buildId` so that every worker uses the same build. The API defaults to
+`https://api.northflank.com`. For another Northflank environment, set `provider.api_url`
+to its HTTPS origin without `/v1`.
 
-The following command **creates live, billable infrastructure**. The head can subsequently
-create and delete worker services within the YAML limits:
+Render the head service definition:
+
+```bash
+ray-northflank bootstrap cluster.local.yaml > head-service.json
+```
+
+This command writes JSON without calling the API or reading `NF_API_TOKEN`.
+Create a project-scoped token with permission to list, read, create, patch and delete services.
+Set `NF_API_TOKEN` in your shell, then create the head:
 
 ```bash
 # Supply NF_API_TOKEN through your shell's secret manager.
 ray-northflank bootstrap cluster.local.yaml --apply
 ```
 
-The token is placed in the head's Northflank runtime secrets. Alternatively, create the
-rendered service through Northflank and attach a secret group restricted to the head service.
-Do not put the token in an unrestricted project secret group: workers deliberately refuse
-to start if they inherit it. Do not put application passwords in the cluster YAML, because
-Ray logs its autoscaling configuration. Use Northflank secret groups for application secrets;
-pre-created Northflank resource tags can select dynamically created worker services.
+`--apply` creates a billable head service. The head starts Ray with the YAML configuration
+and creates workers within its limits. Running bootstrap again leaves an existing owned
+head unchanged. To change its configuration, stop the jobs and head, remove the workers,
+then recreate the head.
 
-Repeated bootstrap calls leave an existing owned head unchanged. They do not update its
-configuration. For this prototype, change configuration only between jobs: drain/stop the
-workload, remove existing workers, then recreate the head with the revised definition.
+The bootstrap command stores the token in the runtime secrets of the head. You can also
+create the rendered service manually and attach a secret group restricted to that service.
+Workers refuse to start if they inherit `NF_API_TOKEN`.
 
-## Submit work and inspect scaling
+Keep application passwords in Northflank secret groups. Ray logs the cluster YAML.
+Use existing resource tags to attach secret groups to workers created by the autoscaler.
 
-Forward the head's private `8265` port using Northflank's port-forward facility. Use the
-forwarded URL/port actually reported by that tool:
+## Submit jobs
+
+Use the same Ray and Python versions on the machine that submits jobs. Forward the private
+head port `8265` through Northflank. Use the local port reported by the forwarding tool
+in place of `8265` below:
 
 ```bash
 ray job submit --address=http://127.0.0.1:8265 --working-dir=./your-app -- python main.py
 ```
 
-Install the same Ray and Python versions in any submitting environment. The application
-should use `ray.init(address="auto")` when running as a Ray job. Ray schedules tasks from
-their declared CPU, memory and custom resource requirements. Idle replicas disappear after
-`idle_timeout_minutes`, subject to `min_workers`, actor lifetimes and retained objects.
-Northflank's CPU-based replica autoscaler must remain disabled on these services.
+Inside a Ray job, connect with `ray.init(address="auto")`. Ray schedules tasks by their CPU,
+memory and custom resource requirements. The example head declares `CPU: 0`, so workers
+run CPU tasks. Size the head for any work that the job driver performs locally.
 
-The example head advertises `CPU: 0`. This keeps tasks on workers while allowing the jobs
-driver and control processes to run on the head. The customer's large serial phase may
-need a different head allocation or an explicit worker resource; zero CPU is a prototype
-choice, not a migration recommendation.
+Idle workers scale down after `idle_timeout_minutes`, subject to `min_workers`, active
+actors and retained objects. Keep the Northflank replica autoscaler disabled.
 
-Read the head's `/tmp/ray/session_latest/logs/monitor.log` for scaling decisions and run
-`ray status` inside the head. Startup failures appear in the affected service's container
-logs. Northflank rollout status `COMPLETED` means deployed, not that a Ray job finished.
+Run `ray status` inside the head to see resource demand. Scaling decisions appear in
+`/tmp/ray/session_latest/logs/monitor.log`. Startup errors appear in the service container
+logs. A Northflank rollout marked `COMPLETED` means that deployment finished.
+Use Ray Jobs to inspect job status.
 
-## Repeat the two-worker smoke test
+## Smoke test
 
-The example workload requires two workers with 2 CPUs each. With the head's private Jobs
-port forwarded locally, run:
+The sample workload needs two workers with 2 CPUs each. Forward the private Jobs port
+as described above, then run:
 
 ```bash
 ray job submit --address=http://127.0.0.1:8265 --working-dir=./examples -- python smoke.py start
@@ -136,110 +111,77 @@ ray job submit --address=http://127.0.0.1:8265 --working-dir=./examples -- pytho
 ray job submit --address=http://127.0.0.1:8265 --working-dir=./examples -- python smoke.py stop
 ```
 
-`start` creates two detached actors, verifies distinct worker/pod identities and checks a
-34.5 MB cross-worker object transfer. The actors keep both workers allocated until `stop`.
-Delete one worker service during this trial and run `status` to observe actor recovery on
-a new worker. Northflank deletion is asynchronous: wait for the service to disappear and
-for Ray to replace it. The other worker should keep its identity. Run `stop` even if a
-check fails, then verify that worker services disappear after the configured idle timeout.
-Pause the head when finished to stop its compute usage and further worker provisioning.
+`start` creates two detached actors, which stay alive after the job exits. It makes sure
+that they run on distinct workers and transfers a 34.5 MB object between them.
+The actors keep both workers allocated until `stop`.
 
-## Networking and identity
+To test recovery, delete one worker service and run `status`. Wait for Northflank to
+finish deleting the service and for Ray to start a replacement. The other worker must keep
+its identity. Run `stop` even if a test fails. Make sure that the workers disappear after
+the idle timeout, then pause the head to stop its compute usage and further worker creation.
 
-All services must run in the same Northflank project/network with private pod-to-pod
-traffic enabled, including worker-to-worker transfers. Each Ray process advertises the
-platform-injected `NF_POD_IP`, never the service's load-balanced virtual IP.
+## Worker identity and networking
 
-The head connects workers through its stable private service address on `6379`. For
-worker identity, the provider resolves `<worker-service-id>-headless` from inside the head
-to obtain the single worker pod IP. This relies on Northflank's headless Service behavior
-and cluster DNS search domain; it is a live-trial acceptance criterion. Multiple IPs cause
-the provider to stop that refresh rather than pick an arbitrary worker. This prototype
-uses IPv4 and requires one active pod per service.
+Each service runs one pod. The `recreate` strategy prevents two pods from temporarily
+sharing a service identity during an update. This setup does not require StatefulSets.
 
-Ports `6379` (head GCS), `8265` (head dashboard/jobs) and `8077` (node manager) are declared
-private. Object-manager port `8076` and Ray's dynamically allocated worker/agent ports need
-direct private connectivity too. Declared service ports alone are not a complete firewall
-allowlist. Keep the Ray cluster and Jobs API accessible only to trusted workloads/users;
-the Jobs API can execute code on the head, which has the provisioning token.
+Workers connect to the private head service on port `6379`, which runs the Ray Global
+Control Service (GCS). Each Ray process advertises its `NF_POD_IP`. The provider resolves
+`<worker-service-id>-headless` to find the worker pod IP. It supports IPv4 and stops a
+refresh if a worker resolves to more than one IP.
 
-The service ID is the provider node ID. Compact metadata in the service description stores
-the full cluster UUID, role, Ray node type, launch hash and creation time. This fits
-Northflank's 200-character description limit and survives autoscaler restarts. Do not edit
-these descriptions. A fresh ownership read precedes deletion; the provider refuses to
-delete the head, foreign services or services whose UID changed.
+Services must share a Northflank project and network. Ports `6379` for GCS, `8265` for
+Ray Jobs and `8077` for the node manager are private service ports. Workers also need
+direct pod access to object-manager port `8076` and the dynamic Ray worker and agent ports.
+Keep the cluster private and limit access to trusted workloads and users. The Jobs API can run
+code on the head, which holds the API token.
 
-## Lifecycle limits
+The Northflank service ID is the Ray provider node ID. The service description stores
+the cluster UUID, node type, role, launch hash and creation time. Do not edit it.
+Before deleting a worker, the provider reads the service again to make sure that it owns it.
+It rejects the head, foreign services and services whose UID changed.
 
-1. The provider uses the pinned V1 `NodeProvider` contract and disables SSH node updaters.
-   The image explicitly selects V1 through `RAY_enable_autoscaler_v2=0`. Supporting V2 or
-   the full `ray up` workflow is separate work.
-2. Pending workers have up to 15 minutes to acquire an IP. Once ready, Ray's 120-second
-   heartbeat timeout handles a worker that cannot join or stops reporting. A pending node
-   past the startup deadline also enters that replacement path. Repeated bad images or
-   unavailable capacity can cause repeated replacements; monitor and stop the head to halt them.
-3. API calls are bounded and safe reads/patches/deletes have limited retries. Creates are
-   never blindly retried: the client looks up the same name after an uncertain response.
-   A later inventory refresh discovers any owned service from an incomplete launch.
-   SDK 2.0.0 retries transport failures for all methods, so the adapter supplies an HTTPX
-   client that surfaces failures immediately and keeps retry decisions in the adapter.
-   Authentication, routes, request serialization and response parsing remain SDK-owned.
-4. API operations are serialized within the provider; inventory/DNS refresh defaults to
-   30 seconds. This is deliberately a small-fleet prototype. At 2,334 workers, 100 services
-   per page means at least 24 reads per refresh: **2,880 requests/hour for listing alone**.
-   Creation/deletion, account quotas, API rate limits, controller throughput and cloud
-   capacity need explicit planning before using the customer's scale.
-5. Head loss loses active jobs and in-memory GCS state. Application checkpoints, task/actor
-   retries and a head recovery design are required for multi-week runs. Idle scale-down
-   invokes Ray's drain path, but service deletion is not a guarantee that arbitrary work
-   finishes gracefully. Stop the head before manually deleting all worker services during
-   teardown; otherwise Ray can replace them.
+## Operation
 
-## Mapping the customer's AWS configuration
+Workers start from a container image. Use `ray-northflank bootstrap` to create the head
+and Ray Jobs to submit work. `ray up`, `ray down`, `ray exec`, SSH and rsync are unsupported.
 
-| Existing setting | Northflank implementation |
-| --- | --- |
-| AWS instance/AMI/SSH/bootstrap | Container image + Northflank compute plan; no AWS NodeProvider |
-| 16 vCPU / 128 GiB workers | Choose a matching plan; explicitly budget Ray heap, object store and overhead |
-| `export_slot: 15` | Keep as a custom resource when configuring full-size workers |
-| `file_mounts`, `uv sync`, OS packages | Bake application and dependencies into the image |
-| S3/IAM, Postgres, Valkey | Separate customer infrastructure/application dependencies |
+By default, workers have 15 minutes to acquire an IP. After that, or once an IP is available,
+Ray uses a 120-second heartbeat timeout to replace unresponsive workers. Bad images or unavailable
+capacity can cause repeated replacements. Stop the head to stop those attempts.
 
-The provided worker YAML advertises about 89.6 GiB of schedulable heap. Preserve this only
-after accounting for object-store memory, `/dev/shm`, Ray overhead and application peaks
-within the selected container limit. Ray resource declarations are scheduling values;
-they do not resize a Northflank compute plan. The sample uses smaller CPU/memory values.
+The adapter retries reads, patches and deletes a limited number of times. After an uncertain
+create response, it looks up the service by name. It does not repeat the create request.
+A later refresh discovers services left by an incomplete launch. An HTTPX wrapper prevents
+the SDK from retrying uncertain creates.
 
-Ray's head listens on `6379` for **GCS, not Redis**. This prototype does not provision Redis
-for Ray. The customer's `PII_REDIS_URL` and `EXPORT_REDIS_URL` are application dependencies
-and should still point at their Valkey/Redis deployment; `PII_DATABASE_URL` points at
-Postgres. The supplied infrastructure script and transcript are inputs to this design,
-not scripts or instructions executed by the adapter.
+API calls run serially. By default, the provider refreshes its service list and DNS every 30 seconds.
+Service lists use pages of 100 entries, so API usage grows with the number of services.
+Account for API rate limits and available compute capacity when choosing worker limits.
 
-The example does not create customer VPCs, cloud accounts, S3 buckets, IAM roles or databases.
-If each customer requires its own cloud account and residency boundary, provision the
-corresponding Northflank BYOC environment first. A project alone does not supply that
-account boundary. AWS fallback instance types, including mixed ARM/x86 choices, also need
-an explicit Northflank capacity and image-architecture policy.
+The head has no persistent GCS state or high availability. Losing it loses active jobs.
+Long runs need application checkpoints, task or actor retries, and a plan to recover the head.
+Ray drains idle workers before deletion, but that does not guarantee that arbitrary work
+finishes. During teardown, stop the head before deleting workers so that Ray cannot replace them.
 
-## Before expanding the prototype
+## Application configuration
 
-Run a small authorized trial that proves zero-to-two scale-up, two distinct service/pod
-identities, cross-worker object transfer, exact-worker deletion, idle scale-down and
-replacement after worker failure. Check that unrelated services remain untouched and
-that a head/monitor restart rediscovers owned workers. Also verify the actual plan limits,
-headless DNS, deployment strategy and token permissions in the chosen account.
+Match Ray CPU and memory declarations to the Northflank compute plan. Leave memory for
+the object store, Ray processes and application overhead. Ray resource declarations
+control scheduling. They do not change the Northflank compute plan.
 
-Live cluster validation is required before treating this prototype as production-ready.
+Install application dependencies and include required files in the container image.
+The adapter does not run VM setup commands or copy files through `file_mounts`.
+Use `--working-dir` when submitting a job to upload its application code.
+
+Ray uses GCS on port `6379` and does not require a Redis service for this setup.
+Provision application databases, object storage and cloud permissions separately.
+Use Northflank secret groups to supply their connection details.
 
 ## References
 
-- [Ray 2.59.0 release](https://github.com/ray-project/ray/releases/tag/ray-2.59.0)
-- [Pinned NodeProvider interface](https://github.com/ray-project/ray/blob/ray-2.59.0/python/ray/autoscaler/node_provider.py)
-- [Pinned V1 autoscaler lifecycle](https://github.com/ray-project/ray/blob/ray-2.59.0/python/ray/autoscaler/_private/autoscaler.py)
-- [Pinned Ray CLI startup behavior](https://github.com/ray-project/ray/blob/ray-2.59.0/python/ray/scripts/scripts.py)
-- [Northflank API reference](https://northflank.com/docs/v1/api)
+- [Ray NodeProvider interface](https://github.com/ray-project/ray/blob/ray-2.59.0/python/ray/autoscaler/node_provider.py)
+- [Ray V1 autoscaler](https://github.com/ray-project/ray/blob/ray-2.59.0/python/ray/autoscaler/_private/autoscaler.py)
+- [Ray startup CLI](https://github.com/ray-project/ray/blob/ray-2.59.0/python/ray/scripts/scripts.py)
+- [Northflank API](https://northflank.com/docs/v1/api)
 - [Northflank Python SDK 2.0.0](https://pypi.org/project/northflank/2.0.0/)
-
-Northflank request shapes, pagination, metadata constraints and headless DNS naming were
-also inspected in the local platform source on 2026-10-06. No platform source was changed.

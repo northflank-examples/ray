@@ -55,8 +55,12 @@ def prepare_config(config):
 
     provider.setdefault("refresh_seconds", 30)
     provider.setdefault("startup_timeout_seconds", 900)
-    if not 5 <= provider["refresh_seconds"] <= 300:
-        raise ValueError("refresh_seconds must be between 5 and 300")
+    refresh_seconds = provider["refresh_seconds"]
+    if isinstance(refresh_seconds, bool) or not isinstance(refresh_seconds, (int, float)):
+        raise ValueError("refresh_seconds must be a whole number between 5 and 300")
+    if not 5 <= refresh_seconds <= 300 or int(refresh_seconds) != refresh_seconds:
+        raise ValueError("refresh_seconds must be a whole number between 5 and 300")
+    provider["refresh_seconds"] = int(refresh_seconds)
     if not 60 <= provider["startup_timeout_seconds"] <= 3600:
         raise ValueError("startup_timeout_seconds must be between 60 and 3600")
     reject_vm_setup(config)
@@ -113,6 +117,8 @@ def validate_resources(resources):
             raise ValueError(f"Resource {name} must be numeric")
         if not math.isfinite(amount) or amount < 0:
             raise ValueError(f"Resource {name} must be finite and nonnegative")
+        if name != "memory" and int(amount) != amount:
+            raise ValueError(f"Resource {name} must be a whole number for ray start")
     if resources.get("GPU", 0):
         raise ValueError("This CPU prototype does not configure Northflank GPU allocation")
     if "object_store_memory" in resources:
