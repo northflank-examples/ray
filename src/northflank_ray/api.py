@@ -91,33 +91,30 @@ class NorthflankClient:
             raise
 
     def create_service(self, body):
-        try:
-            self._call(
-                "create service", self.sdk.create.service.deployment, retry=False, data=body,
-            )
-        except ApiError as error:
-            if not error.retryable and error.status not in (400, 409):
-                raise
-            # A timed-out POST may already have committed. Never replay it blindly.
-            existing = self.get_service(body["name"])
-            if not existing or existing.get("description") != body["description"]:
-                raise error
-            return existing
-
+        created = self._call(
+            "create service", self.sdk.create.service.deployment, retry=False, data=body,
+        ).data
         service = self.get_service(body["name"])
-        if not service or service.get("description") != body["description"]:
+        # appId is name-based. Include the creation timestamp before binding GET's UID.
+        if not service or not service.get("uid"):
             raise RuntimeError(f"Could not confirm created service {body['name']}")
+        identity_fields = ("id", "appId", "createdAt")
+        same_creation = all(created.get(key) and created[key] == service.get(key)
+                            for key in identity_fields)
+        if not same_creation or service["id"] != body["name"]:
+            raise RuntimeError(f"Service identity changed during creation: {body['name']}")
         return service
 
     def set_description(self, service_id, description):
         self._call(
             "patch service", self.sdk.patch.service.deployment,
-            service_id=service_id, data={"description": description},
+            retry=False, service_id=service_id, data={"description": description},
         )
 
     def delete_service(self, service_id):
         try:
-            self._call("delete service", self.sdk.delete.service, service_id=service_id)
+            # The provider must read and verify the UID again before retrying a delete.
+            self._call("delete service", self.sdk.delete.service, retry=False, service_id=service_id)
         except ApiError as error:
             if error.status != 404:
                 raise

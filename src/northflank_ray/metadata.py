@@ -1,6 +1,6 @@
 import re
 import time
-from dataclasses import dataclass, replace
+from dataclasses import asdict, dataclass, replace
 
 from ray.autoscaler.tags import (
     NODE_KIND_HEAD, NODE_KIND_WORKER, STATUS_UNINITIALIZED, STATUS_UP_TO_DATE,
@@ -18,21 +18,21 @@ class NodeMetadata:
     created_at: int
     status: str = STATUS_UNINITIALIZED
 
-    def encode(self):
-        # Northflank descriptions allow 200 characters and exclude JSON braces.
-        fields = (
-            "nf-ray-v1", self.cluster_id, self.kind, self.node_type,
-            self.launch_hash, str(self.created_at), self.status,
-        )
-        if any(not re.fullmatch(r"[a-zA-Z0-9._-]+", field) for field in fields):
+    def __post_init__(self):
+        fields = (self.cluster_id, self.kind, self.node_type, self.launch_hash, self.status)
+        if any(not isinstance(field, str) or not re.fullmatch(r"[a-zA-Z0-9._-]+", field)
+               for field in fields):
             raise ValueError("Invalid Ray node metadata field")
-        description = ";".join(fields)
-        if len(description) > 200:
-            raise ValueError("Ray node metadata exceeds Northflank's description limit")
-        return description
+        if self.kind not in (NODE_KIND_HEAD, NODE_KIND_WORKER):
+            raise ValueError("Invalid Ray node role")
+        if type(self.created_at) is not int or self.created_at < 0:
+            raise ValueError("Invalid Ray node creation time")
+
+    def to_dict(self):
+        return asdict(self)
 
     @classmethod
-    def decode(cls, description):
+    def from_legacy_description(cls, description):
         if not isinstance(description, str):
             return None
         fields = description.split(";")
@@ -40,10 +40,7 @@ class NodeMetadata:
             return None
         try:
             node = cls(fields[1], fields[2], fields[3], fields[4], int(fields[5]), fields[6])
-            node.encode()
         except (ValueError, TypeError):
-            return None
-        if node.kind not in (NODE_KIND_HEAD, NODE_KIND_WORKER):
             return None
         return node
 

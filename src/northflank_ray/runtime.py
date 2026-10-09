@@ -8,6 +8,7 @@ import tempfile
 import yaml
 
 from northflank_ray.config import prepare_config, require_pinned_ray, validate_resources
+from northflank_ray.registry import RedisRegistry
 
 
 def resource_flags(resources):
@@ -25,6 +26,8 @@ def head_flags():
     if not os.environ.get("NF_API_TOKEN"):
         raise ValueError("The head requires NF_API_TOKEN for worker provisioning")
     config = prepare_config(yaml.safe_load(os.environ["RAY_NF_CLUSTER_CONFIG"]))
+    with RedisRegistry(config["provider"]) as registry:
+        registry.read()
     with tempfile.NamedTemporaryFile(mode="w", suffix=".yaml", delete=False) as file:
         yaml.safe_dump(config, file)
         config_path = file.name
@@ -59,6 +62,8 @@ def main():
         # Fail closed if an unrestricted project secret group leaked the controller token.
         if os.environ.get("NF_API_TOKEN"):
             raise ValueError("Restrict NF_API_TOKEN to the head service; workers must not inherit it")
+        if any(os.environ.get(name) for name in ("RAY_NF_REDIS_URL", "RAY_NF_REDIS_CONNECT_URL")):
+            raise ValueError("Restrict Redis registry credentials to the head service")
         flags.append("--address=" + os.environ["RAY_NF_HEAD_ADDRESS"])
 
     soft, hard = resource.getrlimit(resource.RLIMIT_NOFILE)

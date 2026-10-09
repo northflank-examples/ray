@@ -6,7 +6,7 @@ from ray.autoscaler.tags import NODE_KIND_HEAD
 
 def service_body(*, provider, name, metadata, node_config, resources, labels):
     body = copy.deepcopy(node_config["service"])
-    body.update(name=name, description=metadata.encode())
+    body.update(name=name, description=f"Ray {metadata.kind} service.")
     body["autoscaling"] = {"horizontal": {"enabled": False, "minReplicas": 1, "maxReplicas": 1}}
     body["deployment"].update({
         "instances": 1,
