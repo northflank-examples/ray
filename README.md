@@ -11,9 +11,8 @@ It supports CPU workloads submitted through the Ray Jobs CLI or API.
 ## Setup
 
 Create a Northflank project with private traffic between pods. Choose compute plans for
-the head and workers. Each worker service uses a StatefulSet with one replica. The head
-uses one instance with the `recreate` deployment strategy. If your account requires a
-feature flag for `recreate`, enable it first.
+the head and workers. Each service uses the `deployment` type with one replica and
+the `recreate` strategy. If your account requires a feature flag for `recreate`, enable it first.
 
 Create a private [Redis addon](https://northflank.com/docs/v1/application/databases-and-persistence/deploy-databases-on-northflank/deploy-redis-on-northflank)
 in the same project. Keep AOF persistence and the `noeviction` policy enabled. The adapter
@@ -172,9 +171,10 @@ the idle timeout, then pause the head to stop its compute usage and further work
 
 ## Worker identity and networking
 
-Each service runs one pod. Worker services use separate single-replica StatefulSets, so
-Ray can delete any idle worker independently. The head uses the `recreate` strategy to
-avoid overlapping head instances. Workers do not require persistent volumes.
+Each service runs one pod. Each worker has its own Northflank service, so Ray can
+delete any idle worker independently. All services use the `recreate` strategy to avoid
+overlapping instances. Workers do not require StatefulSets or persistent volumes.
+Northflank projects with pod-only mode enabled use the same configuration.
 
 Workers connect to the private head service on port `6379`, which runs the Ray Global
 Control Service (GCS). Each Ray process advertises its `NF_POD_IP`. The provider resolves
