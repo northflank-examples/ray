@@ -63,11 +63,22 @@ Run the commands with the Python environment where you installed this package.
 Create a project-scoped token with permission to list, read, create and delete services.
 Updating an existing head also requires Services General Update and Secrets Services
 Read/Update permissions. The legacy metadata migration needs permission to patch service descriptions.
-Supply these variables through your shell's secret manager:
+Set these variables in a local `.env` file or through your shell's secret manager:
 
 - `NF_API_TOKEN`: the Northflank API token.
 - `RAY_NF_REDIS_URL`: the private Redis connection URL that the head will use.
 - `RAY_NF_REDIS_CONNECT_URL`: an optional URL for local access through a Northflank port forward.
+
+Local commands automatically load `.env` from the directory where you run them.
+Exported shell variables take precedence. A missing `.env` is fine; parent directories
+are not searched. Values are literal: `${NAME}` is not expanded. For example:
+
+```dotenv
+NF_API_TOKEN=your-project-scoped-token
+RAY_NF_REDIS_URL=rediss://user:password@private-redis-host:6379/0
+```
+
+`.env` is already ignored by Git. Head and worker startup does not load `.env` files.
 
 The apply command uses `RAY_NF_REDIS_CONNECT_URL` when set. It only passes
 `RAY_NF_REDIS_URL` to the head. Use the addon's `REDIS_MASTER_URL` connection secret,

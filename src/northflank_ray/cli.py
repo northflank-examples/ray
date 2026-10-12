@@ -2,6 +2,8 @@ import argparse
 import json
 import time
 
+from dotenv import load_dotenv
+
 from northflank_ray.api import NorthflankClient
 from northflank_ray.config import load_config
 from northflank_ray.metadata import NodeMetadata
@@ -200,6 +202,7 @@ def main():
             outcome.add_argument("--uid", help="UID of a service you confirmed belongs to this cluster")
             outcome.add_argument("--absent", action="store_true", help="Confirm no service was created")
     arguments = parser.parse_args()
+    load_dotenv(".env", override=False, interpolate=False)
     config = load_config(arguments.config)
     if arguments.command == "apply":
         apply_cluster(config, dry_run=arguments.dry_run)
