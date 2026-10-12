@@ -26,6 +26,8 @@ def service_body(*, provider, name, metadata, node_config, resources, labels):
         "AUTOSCALER_UPDATE_INTERVAL_S": str(provider["refresh_seconds"]),
         "AUTOSCALER_HEARTBEAT_TIMEOUT_S": "120",
     })
+    if provider.get("gcs_fault_tolerance", False):
+        environment.setdefault("RAY_gcs_rpc_server_reconnect_timeout_s", "600")
     ports = [("ray-node", 8077, "TCP")]
     if metadata.kind == NODE_KIND_HEAD:
         ports.extend([("ray-gcs", 6379, "TCP"), ("ray-jobs", 8265, "HTTP")])

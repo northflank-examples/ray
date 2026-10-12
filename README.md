@@ -88,7 +88,7 @@ For compatibility, a local `RAY_NF_REDIS_URL` is still copied to the head on cre
 when provided. Updates preserve the head's existing Redis credentials.
 Use the addon's `REDIS_MASTER_URL` connection secret with a `redis://` or `rediss://`
 scheme and an optional database path such as `/0`. URL query parameters are unsupported.
-TLS connections verify the server certificate and hostname.
+The adapter registry verifies the TLS server certificate and hostname.
 
 Preview the changes, then apply the configuration:
 
@@ -242,10 +242,60 @@ API calls run serially. By default, the provider refreshes its service list and 
 Service lists use pages of 100 entries, so API usage grows with the number of services.
 Account for API rate limits and available compute capacity when choosing worker limits.
 
-The head has no persistent GCS state or high availability. Losing it loses active jobs.
-Long runs need application checkpoints, task or actor retries, and a plan to recover the head.
+By default, GCS state is held in memory. Enable Redis persistence as described below to retain that metadata.
+Long runs still need application checkpoints, task or actor retries, and a plan to recover the head.
 Ray drains idle workers before deletion, but that does not guarantee that arbitrary work
 finishes. During teardown, stop the head before deleting workers so that Ray cannot replace them.
+
+## GCS Redis persistence
+
+To persist Ray's cluster metadata, enable this option in your cluster configuration:
+
+```yaml
+provider:
+  # Keep the other provider fields from your configuration.
+  gcs_fault_tolerance: true
+```
+
+Build an image containing this feature, update both node types' build identifiers, and run:
+
+```bash
+python -m northflank_ray apply cluster.local.yaml
+```
+
+The head uses its existing `RAY_NF_REDIS_URL` for both the adapter registry and GCS.
+Use Redis database 0: omit the database path or use `/0`.
+Keep this credential in the head's Northflank secrets. No additional local credential or Redis port forward is needed.
+Native GCS storage variables are managed by the adapter and must not be set separately.
+
+The adapter derives a stable GCS storage namespace from the API origin, project ID and cluster UUID.
+GCS keys are separate from the adapter registry keys. Keep the cluster UUID unchanged across head restarts.
+Use a new UUID for a new cluster. Run only one head for each cluster.
+Deleting Northflank services does not remove persisted GCS keys.
+Do not reuse old GCS state after running the cluster without persistence. Start a new cluster with a new UUID instead.
+
+Both `redis://` and `rediss://` URLs support a username and password.
+For TLS, GCS uses system CA certificates to validate the certificate chain and sends the Redis hostname as SNI.
+Ray's Redis client does not provide hostname verification through this setting. Keep Redis on the private network.
+For a private CA, set `RAY_REDIS_CA_CERT` or `RAY_REDIS_CA_PATH` on the head.
+The adapter registry must also trust that CA. Redis Cluster and Sentinel endpoints are unsupported.
+
+New services receive a 600-second GCS reconnect timeout. Workers connect through the head's DNS name.
+You can override `RAY_gcs_rpc_server_reconnect_timeout_s` in a node type's runtime environment.
+Existing workers retain their old timeout until replaced.
+Before first enabling persistence, stop all jobs and wait for all workers to be removed.
+The first persisted head starts a new Ray cluster session. Workers from the previous session cannot reconnect to it.
+Keep Redis persistent, backed up and configured with `noeviction`. Redis availability limits GCS recovery.
+
+This persists GCS metadata, not the head's processes, object store or local files.
+A job driver running on a lost head cannot resume merely because its metadata survives.
+Uploaded application files and local logs are not durable backups. Use application checkpoints and resubmit interrupted jobs.
+Northflank must restart the failed head before the workers' reconnect timeout expires.
+Before relying on recovery, test a head replacement with your workload and confirm that workers reconnect.
+
+Ray officially supports external Redis fault tolerance with KubeRay for Ray Serve.
+This adapter uses Ray's documented `ray start` integration and needs its own recovery validation.
+See [Ray GCS fault tolerance](https://docs.ray.io/en/latest/ray-core/fault_tolerance/gcs.html).
 
 ## Compatibility and recovery commands
 
@@ -269,8 +319,8 @@ address. Preview the import:
 python -m northflank_ray migrate-metadata cluster.local.yaml
 ```
 
-Stop application work, pause the head and wait for its pod to exit. Pausing the head loses
-active jobs because this deployment does not persist Ray GCS state. Do not delete the services.
+Stop application work, pause the head and wait for its pod to exit. Pausing the head interrupts
+job drivers running on it, including when GCS metadata is persisted. Do not delete the services.
 The `--head-stopped` flag confirms that you completed this step. The command does not stop the head.
 
 ```bash
@@ -317,8 +367,8 @@ Install application dependencies and include required files in the container ima
 The adapter does not run VM setup commands or copy files through `file_mounts`.
 Use `--working-dir` when submitting a job to upload its application code.
 
-Ray uses GCS on port `6379`. The Redis addon stores adapter metadata. It does not enable
-Ray GCS persistence or head failover. Those features require separate configuration and testing.
+Ray uses GCS on port `6379`. The Redis addon stores adapter metadata and, when enabled, GCS metadata.
+GCS persistence requires the configuration above. Head recovery still needs workload testing.
 Provision application databases, object storage and cloud permissions separately.
 Use Northflank secret groups to supply their connection details.
 

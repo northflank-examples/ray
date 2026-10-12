@@ -10,6 +10,7 @@ provider:
   project_id: your-ray-project
   cluster_id: 23112b84-1caa-487f-b713-7f7644b4cd96 # Generate a fresh UUID per cluster.
   head_service_id: ray-head
+  gcs_fault_tolerance: false # Enable GCS persistence using the head's Redis addon (database 0).
   disable_node_updaters: true
   use_internal_ips: true
   worker_liveness_check: true

@@ -11,6 +11,7 @@ import yaml
 from northflank_ray.api import NorthflankClient
 from northflank_ray.config import parse_config, require_pinned_ray, validate_resources
 from northflank_ray.metadata import NodeMetadata
+from northflank_ray.gcs import GCS_MANAGED_ENV, gcs_flags
 from northflank_ray.registry import NodeRecord, RedisRegistry
 
 
@@ -56,13 +57,14 @@ def head_flags():
     if not os.environ.get("NF_API_TOKEN"):
         raise ValueError("The head requires NF_API_TOKEN for worker provisioning")
     config = parse_config(os.environ["RAY_NF_CLUSTER_CONFIG"])
+    storage_flags = gcs_flags(config["provider"])
     register_head(config)
     with tempfile.NamedTemporaryFile(mode="w", suffix=".yaml", delete=False) as file:
         yaml.safe_dump(config, file)
         config_path = file.name
     return [
         "--head", "--port=6379", "--dashboard-host=0.0.0.0", "--dashboard-port=8265",
-        "--include-dashboard=true", "--autoscaling-config=" + config_path,
+        "--include-dashboard=true", "--autoscaling-config=" + config_path, *storage_flags,
     ]
 
 
@@ -94,6 +96,8 @@ def main():
             raise ValueError("Restrict NF_API_TOKEN to the head service; workers must not inherit it")
         if any(os.environ.get(name) for name in ("RAY_NF_REDIS_URL", "RAY_NF_REDIS_CONNECT_URL")):
             raise ValueError("Restrict Redis registry credentials to the head service")
+        if any(os.environ.get(name) for name in GCS_MANAGED_ENV):
+            raise ValueError("Restrict GCS Redis configuration and credentials to the head service")
         flags.append("--address=" + os.environ["RAY_NF_HEAD_ADDRESS"])
 
     soft, hard = resource.getrlimit(resource.RLIMIT_NOFILE)

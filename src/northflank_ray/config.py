@@ -11,6 +11,7 @@ import yaml
 from ray.autoscaler._private.util import validate_config
 
 from northflank_ray import RAY_VERSION
+from northflank_ray.gcs import GCS_MANAGED_ENV
 
 
 def require_pinned_ray():
@@ -73,6 +74,8 @@ def prepare_config(config):
     provider["refresh_seconds"] = int(refresh_seconds)
     if not 60 <= provider["startup_timeout_seconds"] <= 3600:
         raise ValueError("startup_timeout_seconds must be between 60 and 3600")
+    if not isinstance(provider.get("gcs_fault_tolerance", False), bool):
+        raise ValueError("provider.gcs_fault_tolerance must be true or false")
     reject_vm_setup(config)
     validate_node_types(config)
     config.setdefault("idle_timeout_minutes", 5)
@@ -155,6 +158,8 @@ def validate_service(node_config):
     environment = service.get("runtimeEnvironment", {})
     if any(key.startswith(("RAY_NF_", "NF_")) for key in environment):
         raise ValueError("NF_* and RAY_NF_* environment keys are managed by the adapter/platform")
+    if GCS_MANAGED_ENV.intersection(environment):
+        raise ValueError("Use provider.gcs_fault_tolerance; do not put GCS credentials in cluster config")
     if not all(isinstance(value, str) for value in environment.values()):
         raise ValueError("Quote all runtimeEnvironment values as strings")
 
