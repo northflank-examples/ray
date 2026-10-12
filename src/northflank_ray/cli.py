@@ -1,5 +1,6 @@
 import argparse
 import json
+import os
 import time
 
 from dotenv import load_dotenv
@@ -34,39 +35,26 @@ def head_body(config):
 
 def apply_head(config, body, *, apply=True, expect_absent=False):
     provider = config["provider"]
-    private_url = redis_url()
-    with NorthflankClient(provider["project_id"], base_url=provider["api_url"]) as client, \
-            RedisRegistry(provider, local=True) as registry:
+    with NorthflankClient(provider["project_id"], base_url=provider["api_url"]) as client:
         existing = client.get_service(body["name"])
         if existing:
             if expect_absent:
                 raise ValueError("Head appeared during apply; retry to update its configuration")
-            records = registry.read()
-            record = records[body["name"]]
-            if record.phase != "active" or not record.matches(existing):
-                raise ValueError("The existing head does not match its Redis ownership record")
             print(f"Head {existing['id']} already exists; configuration was not changed.")
             return
 
-        prefix = f"ray-{provider['cluster_id'][:12]}-w-"
-        if any(service["id"].startswith(prefix) for service in client.list_services()):
-            raise ValueError("Workers already exist; restore or migrate their registry first")
-        if registry.read(allow_missing=True) is not None:
-            raise ValueError("Redis registry already exists; resolve it before creating the head")
         if not apply:
             print(f"Would create head {body['name']} in project {provider['project_id']}.")
-            print("Dry run. No service or registry changes were made.")
+            print("Dry run. No service changes were made; Redis is checked by the head at startup.")
             return
 
-        pending = NodeRecord(head_metadata(config))
-        registry.initialize({body["name"]: pending})
         body["runtimeEnvironment"]["NF_API_TOKEN"] = client.token
-        body["runtimeEnvironment"]["RAY_NF_REDIS_URL"] = private_url
+        if os.environ.get("RAY_NF_REDIS_URL"):
+            body["runtimeEnvironment"]["RAY_NF_REDIS_URL"] = redis_url()
         service = client.create_service(body)
-        registry.change(body["name"], expected=pending, replacement=pending.bound(service))
 
     print(f"Created head service {service['id']} in project {provider['project_id']}.")
-    print("The head will start Ray and provision workers as resource demand grows.")
+    print("The head will register itself in Redis, start Ray and provision workers as demand grows.")
 
 
 def apply_cluster(config, *, dry_run=False):

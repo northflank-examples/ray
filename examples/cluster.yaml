@@ -1,4 +1,4 @@
-# Copy to cluster.local.yaml. Set project, cluster UUID, image and compute plans.
+# Copy to cluster.local.yaml. Set project, cluster UUID, build identifiers and compute plans.
 cluster_name: nf-ray
 max_workers: 3
 upscaling_speed: 1.0
@@ -30,9 +30,11 @@ available_node_types:
         billing:
           deploymentPlan: nf-compute-200 # Example: choose a plan with at least 2 CPU / 4 GiB.
         deployment:
-          external:
-            imagePath: ghcr.io/your-org/ray-northflank:0.1.0
-            # credentials: your-northflank-registry-credential-id
+          internal:
+            id: ray-image
+            branch: main
+            buildId: YOUR_SUCCESSFUL_BUILD_ID
+            buildSHA: YOUR_BUILD_COMMIT_SHA
           storage:
             shmSize: 512 # MiB; included in the container's memory budget.
           gracePeriodSeconds: 60
@@ -50,8 +52,11 @@ available_node_types:
         billing:
           deploymentPlan: nf-compute-200 # Match CPU/memory above to the chosen plan.
         deployment:
-          external:
-            imagePath: ghcr.io/your-org/ray-northflank:0.1.0
+          internal:
+            id: ray-image
+            branch: main
+            buildId: YOUR_SUCCESSFUL_BUILD_ID
+            buildSHA: YOUR_BUILD_COMMIT_SHA
           storage:
             shmSize: 1024
           gracePeriodSeconds: 60

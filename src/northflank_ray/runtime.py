@@ -4,11 +4,14 @@ import os
 import resource
 import shutil
 import tempfile
+import time
 
 import yaml
 
+from northflank_ray.api import NorthflankClient
 from northflank_ray.config import parse_config, require_pinned_ray, validate_resources
-from northflank_ray.registry import RedisRegistry
+from northflank_ray.metadata import NodeMetadata
+from northflank_ray.registry import NodeRecord, RedisRegistry
 
 
 def resource_flags(resources):
@@ -22,12 +25,38 @@ def resource_flags(resources):
     return flags
 
 
+def register_head(config):
+    provider = config["provider"]
+    head_id = provider["head_service_id"]
+    if os.environ.get("NF_SERVICE_INTERNAL_ID") != head_id:
+        raise ValueError("This service does not match the configured Ray head")
+
+    with NorthflankClient(provider["project_id"], base_url=provider["api_url"]) as client, \
+            RedisRegistry(provider) as registry:
+        service = client.get_service(head_id)
+        if service is None or not service.get("uid"):
+            raise ValueError("Could not identify this head service through Northflank")
+        records = registry.read(allow_missing=True)
+        if records is not None:
+            record = records[head_id]
+            if record.phase != "active" or not record.matches(service):
+                raise ValueError("The head does not match its Redis record; resolve the registry first")
+            return
+
+        prefix = f"ray-{provider['cluster_id'][:12]}-w-"
+        if any(worker["id"].startswith(prefix) for worker in client.list_services()):
+            raise ValueError("Workers exist without a registry; restore it before starting the head")
+        metadata = NodeMetadata(
+            provider["cluster_id"], "head", config["head_node_type"], "bootstrap", int(time.time())
+        )
+        registry.initialize({head_id: NodeRecord(metadata).bound(service)})
+
+
 def head_flags():
     if not os.environ.get("NF_API_TOKEN"):
         raise ValueError("The head requires NF_API_TOKEN for worker provisioning")
     config = parse_config(os.environ["RAY_NF_CLUSTER_CONFIG"])
-    with RedisRegistry(config["provider"]) as registry:
-        registry.read()
+    register_head(config)
     with tempfile.NamedTemporaryFile(mode="w", suffix=".yaml", delete=False) as file:
         yaml.safe_dump(config, file)
         config_path = file.name

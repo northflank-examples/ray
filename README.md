@@ -20,13 +20,15 @@ stores service ownership in Redis, so use persistent storage and configure backu
 Use a single primary endpoint. This adapter does not discover primaries through Sentinel
 or connect to Redis Cluster.
 
-Add your application dependencies to the Dockerfile. Build for the architecture of your
-Northflank nodes. This example builds and pushes an x86-64 image:
+Create a Northflank build service named `ray-image` in the same project:
 
-```bash
-docker build --platform linux/amd64 -t ghcr.io/YOUR_ORG/ray-northflank:0.1.0 .
-docker push ghcr.io/YOUR_ORG/ray-northflank:0.1.0
-```
+1. Connect this repository, or your fork, and select the `main` branch.
+2. Select the repository's `Dockerfile` with the repository root as the build context.
+3. Build for the architecture of your Northflank nodes.
+4. Wait for a successful build and copy its build ID and commit SHA.
+
+If your application needs additional dependencies, add them to the Dockerfile in your fork before building.
+Northflank builds and stores the image for the head and workers.
 
 Install the package locally with Python 3.11 and copy the example configuration:
 
@@ -37,37 +39,33 @@ python -m pip install -e .
 cp examples/cluster.yaml cluster.local.yaml
 ```
 
-In `cluster.local.yaml`, set `project_id`, generate a new `cluster_id` with `uuidgen`,
-and set the image and compute plan for each node type. Match the declared Ray resources
-to each plan. Keep `max_workers: 3` for the first run.
+In `cluster.local.yaml`, set `project_id` and generate a new `cluster_id` with `uuidgen`.
+Set the compute plan for each node type. Match the declared Ray resources to each plan.
+Keep `max_workers: 3` for the first run.
 
-Use an image digest or a tag that you will not overwrite. For private images, set
-`deployment.external.credentials` to a Northflank registry credential ID on both node types.
-
-If Northflank builds the image, replace `deployment.external` in both node types with:
+Under `node_config.service.deployment.internal` in both node types, set the successful build's identifiers:
 
 ```yaml
 internal:
   id: ray-image
   branch: main
   buildId: YOUR_SUCCESSFUL_BUILD_ID
+  buildSHA: YOUR_BUILD_COMMIT_SHA
 ```
 
-Pin `buildId` so that every worker uses the same build. When patching an existing
-deployment, also set `buildSHA` to that build's commit SHA. Otherwise, Northflank can
-retain the previous SHA and reject the new build ID. The API defaults to
-`https://api.northflank.com`. For another Northflank environment, set `provider.api_url`
-to its HTTPS origin without `/v1`.
+Pin both `buildId` and `buildSHA` so the head and workers use the selected build.
+For updates, replace both values with the new build's identifiers before running `apply`.
+Northflank can reject a new build ID if the configuration retains the previous commit SHA.
+
+The API defaults to `https://api.northflank.com`. For another Northflank environment,
+set `provider.api_url` to its HTTPS origin without `/v1`.
 
 Run the commands with the Python environment where you installed this package.
 Create a project-scoped token with permission to list, read, create and delete services.
 Updating an existing head also requires Services General Update and Secrets Services
 Read/Update permissions. The legacy metadata migration needs permission to patch service descriptions.
-Set these variables in a local `.env` file or through your shell's secret manager:
-
-- `NF_API_TOKEN`: the Northflank API token.
-- `RAY_NF_REDIS_URL`: the private Redis connection URL that the head will use.
-- `RAY_NF_REDIS_CONNECT_URL`: an optional URL for local access through a Northflank port forward.
+Set `NF_API_TOKEN` in a local `.env` file or through your shell's secret manager.
+This is the only local credential required by `apply`.
 
 Local commands automatically load `.env` from the directory where you run them.
 Exported shell variables take precedence. A missing `.env` is fine; parent directories
@@ -75,17 +73,22 @@ are not searched. Values are literal: `${NAME}` is not expanded. For example:
 
 ```dotenv
 NF_API_TOKEN=your-project-scoped-token
-RAY_NF_REDIS_URL=rediss://user:password@private-redis-host:6379/0
 ```
 
 `.env` is already ignored by Git. Head and worker startup does not load `.env` files.
 
-The apply command uses `RAY_NF_REDIS_CONNECT_URL` when set. It only passes
-`RAY_NF_REDIS_URL` to the head. Use the addon's `REDIS_MASTER_URL` connection secret,
-with a `redis://` or `rediss://` scheme and an optional database path such as `/0`.
-URL query parameters are unsupported. TLS connections verify the server certificate and hostname.
-If forwarding a TLS connection, retain a hostname that matches the certificate and resolves
-to the forwarded address on your machine.
+Set `RAY_NF_REDIS_URL` on the head through a Northflank secret group linked only to the
+head service. For a new head, use a tag on the head node type's `node_config.service.tags`
+to attach that secret group at creation. Do not use that tag on worker node types.
+Alternatively, set the variable directly on the head after creation. The head cannot
+start until valid Redis credentials are supplied. The head needs a reachable private
+Redis endpoint, but your laptop does not need its URL or a Redis port forward.
+
+For compatibility, a local `RAY_NF_REDIS_URL` is still copied to the head on creation
+when provided. Updates preserve the head's existing Redis credentials.
+Use the addon's `REDIS_MASTER_URL` connection secret with a `redis://` or `rediss://`
+scheme and an optional database path such as `/0`. URL query parameters are unsupported.
+TLS connections verify the server certificate and hostname.
 
 Preview the changes, then apply the configuration:
 
@@ -95,15 +98,15 @@ python -m northflank_ray apply cluster.local.yaml
 ```
 
 `apply` creates a billable head service if it is missing, or updates an existing head
-whose Redis ownership record matches. The head starts Ray and creates workers within
-the configured limits. Creation registers the head in Redis before workers can be provisioned.
+whose stored Ray cluster identity matches the config. The head starts Ray and creates workers within
+the configured limits. The head registers itself in Redis on startup before workers can be provisioned.
 If the stored config and managed environment already match, the command makes no changes.
 It does not detect manual changes to other service settings when the config is unchanged.
 
-`--dry-run` checks Northflank and Redis but writes nothing. It requires the same local
-credentials and connectivity as applying the configuration.
+`apply` and `--dry-run` only contact the Northflank API. The dry run writes nothing;
+Redis connectivity and registry checks happen inside the head at startup.
 
-On creation, the command stores the local API token and private Redis URL in the head's runtime secrets.
+On creation, the command stores the local API token in the head's runtime secrets.
 Use a token limited to this project's worker provisioning permissions for initial creation.
 For later updates, a separate operator token can have the additional update permissions;
 apply preserves the token already stored on the head.
@@ -127,7 +130,8 @@ Creation and updates store `RAY_NF_CLUSTER_CONFIG` as JSON. Existing YAML values
 remain readable and are converted to JSON on the next update. The head writes a temporary
 YAML file for Ray's `--autoscaling-config` to match Ray's parser, including numeric values.
 
-Applying a config requires local Redis access to verify the head's ownership.
+Applying a config checks the head's role and stored cluster config through the Northflank API.
+It does not read or modify Redis from your laptop.
 The operator token needs Services General Read/Update and Secrets Services Read/Update
 permissions. The head's worker-provisioning token does not need those extra permissions.
 The command preserves the head's existing token, Redis URL and other environment variables.
@@ -137,8 +141,7 @@ The update applies the head image, resources and managed settings as well as wor
 configuration. Pin both `buildId` and `buildSHA` for an internal head image. It can restart
 the head and interrupt running jobs. Existing workers are not redeployed; Ray applies
 its scaling and replacement rules to them. Check the running head image and `ray status`
-after the rollout. On pod-only deployments, a pause/resume may be needed to replace the
-running head pod. Cluster identity, head node type and head infrastructure cannot change.
+after the rollout. Cluster identity, head node type and head infrastructure cannot change.
 
 ## Submit jobs
 
@@ -187,7 +190,6 @@ the idle timeout, then pause the head to stop its compute usage and further work
 Each service runs one pod. Each worker has its own Northflank service, so Ray can
 delete any idle worker independently. All services use the `recreate` strategy to avoid
 overlapping instances. Workers do not require StatefulSets or persistent volumes.
-Northflank projects with pod-only mode enabled use the same configuration.
 
 Workers connect to the private head service on port `6379`, which runs the Ray Global
 Control Service (GCS). Each Ray process advertises its `NF_POD_IP`. The provider resolves
@@ -220,7 +222,7 @@ By default, workers have 15 minutes to acquire an IP. After that, or once an IP 
 Ray uses a 120-second heartbeat timeout to replace unresponsive workers. Bad images or unavailable
 capacity can cause repeated replacements. Stop the head to stop those attempts.
 
-The adapter retries reads a limited number of times. It records a pending creation in Redis
+The adapter retries reads a limited number of times. For workers, it records a pending creation in Redis
 before calling Northflank. A successful response identifies the created service, and a follow-up
 read supplies its UID. An HTTPX wrapper prevents the SDK from retrying uncertain creates.
 If a response is lost, the adapter retains the pending record and stops scaling until an operator
@@ -230,9 +232,11 @@ Before deletion, the adapter records its intent in Redis. If the head restarts d
 it reads the service UID again before retrying. It removes the record only after Northflank
 confirms that the service is absent.
 
-If Redis is unavailable, its registry is missing, or a service has no matching record, the adapter
-stops scaling. It does not rebuild ownership from service names. Restore the registry from a
-current backup and inspect it before restarting the head. Run only one head per cluster.
+If Redis is unavailable or worker ownership is missing, the adapter stops scaling. On startup,
+the head creates an absent registry only when no worker services exist for this cluster.
+If workers already exist, restore the registry from a current backup; the adapter does not
+rebuild their ownership from service names. Existing head records must match the service UID.
+Run only one head per cluster.
 
 API calls run serially. By default, the provider refreshes its service list and DNS every 30 seconds.
 Service lists use pages of 100 entries, so API usage grows with the number of services.
@@ -251,13 +255,15 @@ head service JSON offline. `update --apply` reapplies settings even when the sto
 is unchanged. Use `apply` for normal setup and updates.
 
 `registry`, `reconcile` and `migrate-metadata` are inspection and recovery tools. They are
-not part of the normal deployment flow. Apply never adopts an unregistered service or
-repairs uncertain ownership automatically.
+not part of the normal deployment flow. Apply does not repair worker ownership records.
 
 ### Migration and interrupted creates
 
 To migrate a cluster that stores metadata in descriptions, install this package locally and
-supply the API token and Redis URLs described above. Preview the import:
+supply the API token, `RAY_NF_REDIS_URL` and, if needed, `RAY_NF_REDIS_CONNECT_URL` for a
+local port forward. Only these registry inspection/recovery commands need local Redis access.
+For TLS forwarding, retain a hostname matching the certificate and resolving to the forwarded
+address. Preview the import:
 
 ```bash
 python -m northflank_ray migrate-metadata cluster.local.yaml
@@ -295,6 +301,11 @@ If Northflank confirms that no service was created, use `--absent` in place of `
 This only removes the pending record. It never deletes a service. An absent pending head also
 removes its otherwise empty registry, so apply can be retried. Keep the head stopped until
 all pending records are resolved. Never register a service that you cannot identify as your own.
+
+New heads register themselves and do not create pending head records. Pending head records
+from older releases still require the recovery procedure above. Build an image containing
+this startup change before creating a head with the API-only apply command; older images
+expect the registry to have been initialized by the CLI.
 
 ## Application configuration
 
