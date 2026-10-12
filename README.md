@@ -59,41 +59,43 @@ retain the previous SHA and reject the new build ID. The API defaults to
 `https://api.northflank.com`. For another Northflank environment, set `provider.api_url`
 to its HTTPS origin without `/v1`.
 
-Run the setup commands with the Python environment where you installed this package.
-Render the head service definition:
-
-```bash
-python -m northflank_ray bootstrap cluster.local.yaml > head-service.json
-```
-
-This command writes JSON without calling Northflank or Redis, or reading credentials.
+Run the commands with the Python environment where you installed this package.
 Create a project-scoped token with permission to list, read, create and delete services.
-The legacy metadata migration also needs permission to patch service descriptions.
+Updating an existing head also requires Services General Update and Secrets Services
+Read/Update permissions. The legacy metadata migration needs permission to patch service descriptions.
 Supply these variables through your shell's secret manager:
 
 - `NF_API_TOKEN`: the Northflank API token.
 - `RAY_NF_REDIS_URL`: the private Redis connection URL that the head will use.
 - `RAY_NF_REDIS_CONNECT_URL`: an optional URL for local access through a Northflank port forward.
 
-The bootstrap command uses `RAY_NF_REDIS_CONNECT_URL` when set. It only passes
+The apply command uses `RAY_NF_REDIS_CONNECT_URL` when set. It only passes
 `RAY_NF_REDIS_URL` to the head. Use the addon's `REDIS_MASTER_URL` connection secret,
 with a `redis://` or `rediss://` scheme and an optional database path such as `/0`.
 URL query parameters are unsupported. TLS connections verify the server certificate and hostname.
 If forwarding a TLS connection, retain a hostname that matches the certificate and resolves
 to the forwarded address on your machine.
 
-Create the head:
+Preview the changes, then apply the configuration:
 
 ```bash
-python -m northflank_ray bootstrap cluster.local.yaml --apply
+python -m northflank_ray apply cluster.local.yaml --dry-run
+python -m northflank_ray apply cluster.local.yaml
 ```
 
-`--apply` creates a billable head service. The head starts Ray with the cluster configuration
-and creates workers within its limits. Running bootstrap again leaves an existing owned
-head unchanged. It registers the head in Redis before the autoscaler starts provisioning workers.
-Use bootstrap to create the head so that the service and registry agree.
+`apply` creates a billable head service if it is missing, or updates an existing head
+whose Redis ownership record matches. The head starts Ray and creates workers within
+the configured limits. Creation registers the head in Redis before workers can be provisioned.
+If the stored config and managed environment already match, the command makes no changes.
+It does not detect manual changes to other service settings when the config is unchanged.
 
-The bootstrap command stores the API token and private Redis URL in the head's runtime secrets.
+`--dry-run` checks Northflank and Redis but writes nothing. It requires the same local
+credentials and connectivity as applying the configuration.
+
+On creation, the command stores the local API token and private Redis URL in the head's runtime secrets.
+Use a token limited to this project's worker provisioning permissions for initial creation.
+For later updates, a separate operator token can have the additional update permissions;
+apply preserves the token already stored on the head.
 Workers refuse to start if they inherit either credential. For credential rotation, you can
 link the Redis connection secret through a secret group restricted to the head service.
 Remove the direct runtime value when switching to an inherited secret.
@@ -106,15 +108,15 @@ Use existing resource tags to attach secret groups to workers created by the aut
 Edit your local YAML or JSON config, then preview and apply the update:
 
 ```bash
-python -m northflank_ray update cluster.local.yaml
-python -m northflank_ray update cluster.local.yaml --apply
+python -m northflank_ray apply cluster.local.yaml --dry-run
+python -m northflank_ray apply cluster.local.yaml
 ```
 
-Both bootstrap and update store `RAY_NF_CLUSTER_CONFIG` as JSON. Existing YAML values
+Creation and updates store `RAY_NF_CLUSTER_CONFIG` as JSON. Existing YAML values
 remain readable and are converted to JSON on the next update. The head writes a temporary
 YAML file for Ray's `--autoscaling-config` to match Ray's parser, including numeric values.
 
-Update requires local Redis access, as bootstrap does, to verify the head's ownership.
+Applying a config requires local Redis access to verify the head's ownership.
 The operator token needs Services General Read/Update and Secrets Services Read/Update
 permissions. The head's worker-provisioning token does not need those extra permissions.
 The command preserves the head's existing token, Redis URL and other environment variables.
@@ -200,8 +202,8 @@ The key has no expiry. The adapter never reads or modifies Ray's own Redis keys.
 
 ## Operation
 
-Workers start from a container image. Use `python -m northflank_ray bootstrap` to create the head
-and Ray Jobs to submit work. `ray up`, `ray down`, `ray exec`, SSH and rsync are unsupported.
+Workers start from a container image. Use `python -m northflank_ray apply cluster.local.yaml`
+to create or update the head and Ray Jobs to submit work. `ray up`, `ray down`, `ray exec`, SSH and rsync are unsupported.
 
 By default, workers have 15 minutes to acquire an IP. After that, or once an IP is available,
 Ray uses a 120-second heartbeat timeout to replace unresponsive workers. Bad images or unavailable
@@ -230,7 +232,18 @@ Long runs need application checkpoints, task or actor retries, and a plan to rec
 Ray drains idle workers before deletion, but that does not guarantee that arbitrary work
 finishes. During teardown, stop the head before deleting workers so that Ray cannot replace them.
 
-## Migration and interrupted creates
+## Compatibility and recovery commands
+
+`bootstrap` and `update` remain available for existing scripts. Both default to a preview
+and require `--apply` to write changes. `bootstrap` without `--apply` still renders the
+head service JSON offline. `update --apply` reapplies settings even when the stored config
+is unchanged. Use `apply` for normal setup and updates.
+
+`registry`, `reconcile` and `migrate-metadata` are inspection and recovery tools. They are
+not part of the normal deployment flow. Apply never adopts an unregistered service or
+repairs uncertain ownership automatically.
+
+### Migration and interrupted creates
 
 To migrate a cluster that stores metadata in descriptions, install this package locally and
 supply the API token and Redis URLs described above. Preview the import:
@@ -269,7 +282,7 @@ python -m northflank_ray reconcile cluster.local.yaml --service-id SERVICE_ID --
 
 If Northflank confirms that no service was created, use `--absent` in place of `--uid SERVICE_UID`.
 This only removes the pending record. It never deletes a service. An absent pending head also
-removes its otherwise empty registry, so bootstrap can be retried. Keep the head stopped until
+removes its otherwise empty registry, so apply can be retried. Keep the head stopped until
 all pending records are resolved. Never register a service that you cannot identify as your own.
 
 ## Application configuration

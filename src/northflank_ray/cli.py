@@ -30,13 +30,15 @@ def head_body(config):
     return body
 
 
-def apply_head(config, body):
+def apply_head(config, body, *, apply=True, expect_absent=False):
     provider = config["provider"]
     private_url = redis_url()
     with NorthflankClient(provider["project_id"], base_url=provider["api_url"]) as client, \
             RedisRegistry(provider, local=True) as registry:
         existing = client.get_service(body["name"])
         if existing:
+            if expect_absent:
+                raise ValueError("Head appeared during apply; retry to update its configuration")
             records = registry.read()
             record = records[body["name"]]
             if record.phase != "active" or not record.matches(existing):
@@ -47,6 +49,13 @@ def apply_head(config, body):
         prefix = f"ray-{provider['cluster_id'][:12]}-w-"
         if any(service["id"].startswith(prefix) for service in client.list_services()):
             raise ValueError("Workers already exist; restore or migrate their registry first")
+        if registry.read(allow_missing=True) is not None:
+            raise ValueError("Redis registry already exists; resolve it before creating the head")
+        if not apply:
+            print(f"Would create head {body['name']} in project {provider['project_id']}.")
+            print("Dry run. No service or registry changes were made.")
+            return
+
         pending = NodeRecord(head_metadata(config))
         registry.initialize({body["name"]: pending})
         body["runtimeEnvironment"]["NF_API_TOKEN"] = client.token
@@ -56,6 +65,19 @@ def apply_head(config, body):
 
     print(f"Created head service {service['id']} in project {provider['project_id']}.")
     print("The head will start Ray and provision workers as resource demand grows.")
+
+
+def apply_cluster(config, *, dry_run=False):
+    provider = config["provider"]
+    body = head_body(config)
+    with NorthflankClient(provider["project_id"], base_url=provider["api_url"]) as client:
+        existing = client.get_service(provider["head_service_id"])
+
+    if existing is not None:
+        update_head(config, body, apply=not dry_run, skip_unchanged=True)
+        return
+
+    apply_head(config, body, apply=not dry_run, expect_absent=True)
 
 
 def migration_records(client, provider, existing):
@@ -154,6 +176,9 @@ def main():
         prog="python -m northflank_ray", description="Manage a Ray head on Northflank",
     )
     commands = parser.add_subparsers(dest="command", required=True)
+    apply = commands.add_parser("apply", help="Create or update a cluster from its config")
+    apply.add_argument("config")
+    apply.add_argument("--dry-run", action="store_true", help="Preview without changing infrastructure")
     bootstrap = commands.add_parser("bootstrap", help="Render a head service; --apply creates it")
     bootstrap.add_argument("config")
     bootstrap.add_argument("--apply", action="store_true", help="Create live infrastructure")
@@ -176,6 +201,9 @@ def main():
             outcome.add_argument("--absent", action="store_true", help="Confirm no service was created")
     arguments = parser.parse_args()
     config = load_config(arguments.config)
+    if arguments.command == "apply":
+        apply_cluster(config, dry_run=arguments.dry_run)
+        return
     if arguments.command == "update":
         update_head(config, head_body(config), apply=arguments.apply)
         return

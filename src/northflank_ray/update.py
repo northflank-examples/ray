@@ -37,7 +37,7 @@ def checked_head(client, registry, head_id):
     return record
 
 
-def update_head(config, body, *, apply=False):
+def update_head(config, body, *, apply=False, skip_unchanged=False):
     provider = config["provider"]
     head_id = provider["head_service_id"]
     with NorthflankClient(provider["project_id"], base_url=provider["api_url"]) as client, \
@@ -45,17 +45,21 @@ def update_head(config, body, *, apply=False):
         record = checked_head(client, registry, head_id)
         environment = client.get_runtime_environment(head_id)
         previous = parse_config(environment["RAY_NF_CLUSTER_CONFIG"])
-        validate_update(config, previous)
         patch = copy.deepcopy(body)
         for key in ("name", "description", "infrastructure"):
             patch.pop(key, None)
         patch["runtimeEnvironment"] = {**environment, **body["runtimeEnvironment"]}
 
+        if skip_unchanged and config == previous and patch["runtimeEnvironment"] == environment:
+            print(f"Head {head_id} already has this configuration; no changes made.")
+            return
+        validate_update(config, previous)
+
         print(f"Update head {head_id} in project {provider['project_id']}.")
         print("Apply head image/settings and JSON cluster config; preserve other environment variables.")
         print("The head may restart, which interrupts running Ray jobs. Existing workers are not redeployed.")
         if not apply:
-            print("Dry run. Pass --apply to update the service.")
+            print("Dry run. No service or registry changes were made.")
             return
 
         if checked_head(client, registry, head_id) != record:
